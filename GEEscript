@@ -1,0 +1,64 @@
+This GEE script is used to extract lake surface temperature based on MOD11 products.
+
+The original script and input assets could be found in Google Earth Engine platform:
+https://code.earthengine.google.com/563820c56b30595de901c21aef5f0c71 
+
+import assets:
+var dataset: ImageCollection "MOD11A1"
+var lakes Table user/linanguo93/lakesBuffer160
+
+
+Source Code:
+
+//Time-span
+var start_date = ee.Date.fromYMD(2000, 1, 1);
+var end_date = ee.Date.fromYMD(2018, 1, 1);//to 2017-12-31
+var band='LST_Day_1km'//Or'LST_Night_1km'
+var LSTdata = dataset.select(band);
+var LSTdata =LSTdata.filterDate(start_date,end_date);
+//convert LST to K.
+LSTdata = LSTdata.map(function(img){
+  var date = img.get('system:time_start');
+  return img.multiply(0.02).set('system_time_start', date);
+});
+
+//iteration of shps
+var lakeids=lakes.reduceColumns(ee.Reducer.toList(), ["Id"])//ids of lakes
+               .get("list");
+lakeids.evaluate(function(ids) {
+  print("Number of lakes: ", ids.length);
+  for (var i=0; i<ids.length; i++) {
+    var feature = lakes.filter(ee.Filter.eq("Id", ids[i]))
+                      .first();
+    var feature = ee.Feature(feature);//A single lake feature 
+    var lake1 = ee.FeatureCollection(feature)
+    // Create a function that takes an image, calculates the mean over a
+    // geometry and returns the value and the corresponding date as a 
+    // feature.
+    var createTS = function(img){
+      var date = img.get('system_time_start');
+      var value = img.reduceRegion(ee.Reducer.mean(), lake1).get(band);
+      var ft = ee.Feature(null, {'system:time_start': date, 
+                               'date': ee.Date(date).format('Y/M/d'), 
+                               'value': value});
+      return ft;
+    };
+   // Apply the function to each image in modisLST, loop by "map"
+   var TS = LSTdata.map(createTS);
+
+  // Create a graph of each time-series.(Must less than 5000 elments)
+   // var graph = ui.Chart.feature.byFeature(TS, 'system:time_start', 'value');
+   // print(graph.setChartType("ColumnChart")
+   //             .setOptions({vAxis: {title: 'LST [deg. C]'},
+   //                         hAxis: {title: 'Date'}}));
+    
+   // Export to csv
+    //print(TS)//print on screen
+    Export.table.toDrive({
+    collection: TS,
+    description:'MODdayLst_'+ids[i].toString(),// Filename of output, named by property "Id" in feature
+    fileFormat: 'csv'
+    });
+  }
+})
+
